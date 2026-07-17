@@ -154,6 +154,37 @@ def resolve_route():
     return jsonify({"url": stream_url, "title": title})
 
 
+@app.route("/debug")
+def debug_route():
+    if not check_secret():
+        return jsonify({"error": "unauthorized"}), 401
+    video_id = request.args.get("id", "")
+    if not VIDEO_ID_RE.match(video_id):
+        return jsonify({"error": "bad id"}), 400
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "skip_download": True,
+        "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}},
+    }
+    if _have_cookies:
+        ydl_opts["cookiefile"] = COOKIES_PATH
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+    except Exception as e:
+        return jsonify({"error": str(e)[:400]}), 502
+    formats = info.get("formats") or []
+    summary = [{
+        "format_id": f.get("format_id"), "protocol": f.get("protocol"),
+        "acodec": f.get("acodec"), "vcodec": f.get("vcodec"),
+        "has_url": bool(f.get("url")), "has_manifest_url": bool(f.get("manifest_url")),
+        "ext": f.get("ext"),
+    } for f in formats]
+    return jsonify({"top_level_url": bool(info.get("url")), "format_count": len(formats), "formats": summary})
+
+
 @app.route("/health")
 def health():
     return jsonify({"ok": True, "cookies_loaded": _have_cookies})
