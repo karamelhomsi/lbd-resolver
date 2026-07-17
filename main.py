@@ -87,8 +87,8 @@ _STRATEGIES = [
 # format list to everything else, 18 is the one concrete format worth trying by
 # exact itag rather than a selector that depends on what's actually offered.
 _FORMAT_FALLBACKS = {
-    "audio": ["bestaudio/best", "best", "18"],
-    "video": ["best[acodec!=none][vcodec!=none]/best", "best", "18"],
+    "audio": ["bestaudio/best", "18"],
+    "video": ["best[acodec!=none][vcodec!=none]/best", "18"],
 }
 
 
@@ -109,27 +109,35 @@ def _extract_direct_url(info: dict, kind: str):
 def resolve(video_id: str, kind: str):
     url = f"https://www.youtube.com/watch?v={video_id}"
     errors = []
-    for strategy in _STRATEGIES:
-        for fmt in _FORMAT_FALLBACKS[kind]:
-            ydl_opts = {
-                "format": fmt,
-                "quiet": True,
-                "no_warnings": True,
-                "noplaylist": True,
-                "skip_download": True,
-                "extractor_args": {"youtube": strategy},
-            }
-            if _have_cookies:
-                ydl_opts["cookiefile"] = COOKIES_PATH
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                stream_url = _extract_direct_url(info, kind)
-                if stream_url:
-                    return stream_url, info.get("title")
-                errors.append(f"{strategy['player_client']}/{fmt}: no url in formats")
-            except Exception as e:
-                errors.append(f"{strategy['player_client']}/{fmt}: {str(e)[:150]}")
+    # A cookie session can itself end up flagged/restricted (confirmed 2026-07-17 —
+    # even a mega-viral video that resolved fine with zero cookies returned nothing
+    # but storyboard thumbnails once cookies were added), so cookie-using attempts
+    # are tried first, then the exact same strategy list is retried with cookies
+    # off entirely as a last resort rather than letting a poisoned session block
+    # every request.
+    cookie_modes = [True, False] if _have_cookies else [False]
+    for use_cookies in cookie_modes:
+        for strategy in _STRATEGIES:
+            for fmt in _FORMAT_FALLBACKS[kind]:
+                ydl_opts = {
+                    "format": fmt,
+                    "quiet": True,
+                    "no_warnings": True,
+                    "noplaylist": True,
+                    "skip_download": True,
+                    "extractor_args": {"youtube": strategy},
+                }
+                if use_cookies:
+                    ydl_opts["cookiefile"] = COOKIES_PATH
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                    stream_url = _extract_direct_url(info, kind)
+                    if stream_url:
+                        return stream_url, info.get("title")
+                    errors.append(f"cookies={use_cookies}/{strategy['player_client']}/{fmt}: no url in formats")
+                except Exception as e:
+                    errors.append(f"cookies={use_cookies}/{strategy['player_client']}/{fmt}: {str(e)[:150]}")
     # Server-side only — helps diagnose which strategies failed without exposing
     # internals to the client response.
     print(f"resolve({video_id}, {kind}) exhausted all strategies: {errors}")
@@ -166,6 +174,8 @@ def debug_route():
     video_id = request.args.get("id", "")
     if not VIDEO_ID_RE.match(video_id):
         return jsonify({"error": "bad id"}), 400
+    use_cookies = _have_cookies and request.args.get("nocookies") != "1"
+    client = request.args.get("client", "android,ios,web").split(",")
     ydl_opts = {
         "format": "all",  # a selector that matches everything — can't itself fail,
                           # unlike the default 'best' selector this is diagnosing.
@@ -173,9 +183,9 @@ def debug_route():
         "no_warnings": True,
         "noplaylist": True,
         "skip_download": True,
-        "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}},
+        "extractor_args": {"youtube": {"player_client": client}},
     }
-    if _have_cookies:
+    if use_cookies:
         ydl_opts["cookiefile"] = COOKIES_PATH
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -189,7 +199,10 @@ def debug_route():
         "has_url": bool(f.get("url")), "has_manifest_url": bool(f.get("manifest_url")),
         "ext": f.get("ext"),
     } for f in formats]
-    return jsonify({"top_level_url": bool(info.get("url")), "format_count": len(formats), "formats": summary})
+    return jsonify({
+        "used_cookies": use_cookies, "client": client,
+        "top_level_url": bool(info.get("url")), "format_count": len(formats), "formats": summary,
+    })
 
 
 @app.route("/health")
