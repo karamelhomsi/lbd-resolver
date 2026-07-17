@@ -81,9 +81,14 @@ _STRATEGIES = [
     {"player_client": ["android"]},
     {"player_client": ["tv"]},
 ]
+# itag 18 (360p H.264/AAC combined) is YouTube's oldest, most universally-available
+# progressive format — kept for compatibility across every client for 15+ years.
+# When cookies+datacenter-IP causes YouTube to serve a restricted/manifest-only
+# format list to everything else, 18 is the one concrete format worth trying by
+# exact itag rather than a selector that depends on what's actually offered.
 _FORMAT_FALLBACKS = {
-    "audio": ["bestaudio/best", "best"],
-    "video": ["best[acodec!=none][vcodec!=none]/best", "best"],
+    "audio": ["bestaudio/best", "best", "18"],
+    "video": ["best[acodec!=none][vcodec!=none]/best", "best", "18"],
 }
 
 
@@ -162,6 +167,8 @@ def debug_route():
     if not VIDEO_ID_RE.match(video_id):
         return jsonify({"error": "bad id"}), 400
     ydl_opts = {
+        "format": "all",  # a selector that matches everything — can't itself fail,
+                          # unlike the default 'best' selector this is diagnosing.
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
