@@ -1,24 +1,22 @@
 """
 Tiny YouTube stream-URL resolver for Lebanese Black Dude, deployed on Render's free
 tier. Public cobalt/Invidious/Piped instances all hit YouTube's "sign in to confirm
-you're not a bot" wall as of 2026-07 — yt-dlp's own extractor (actively maintained,
-handles signature ciphers + proof-of-origin tokens internally) works with ZERO
-cookies for a handful of extremely popular/cached videos, but shared cloud-host IPs
-(Render, GCP, AWS, etc.) are IP-reputation flagged by YouTube for everything else —
-confirmed by direct testing 2026-07-17, every non-mega-viral video hit the bot wall.
-Cookies from a real logged-in session are the standard, yt-dlp-recommended fix for
-this exact error. Set YOUTUBE_COOKIES as a Render env var — either the raw Netscape
-cookies.txt content, OR that same content base64-encoded (auto-detected below), to
-survive any dashboard text field that might mangle embedded newlines.
+you're not a bot" wall as of 2026-07 — yt-dlp's own extractor still works with ZERO
+cookies for a handful of extremely popular/cached videos, but every other video hits
+the same bot wall from a shared cloud-host IP (confirmed by direct testing
+2026-07-17). Cookies from a real logged-in session are yt-dlp's own recommended fix.
+Set YOUTUBE_COOKIES as a Render env var — either the raw Netscape cookies.txt
+content, OR that same content base64-encoded (auto-detected below, safer against
+dashboard text fields that can mangle embedded newlines).
 
-Even with valid cookies, a session used from a datacenter IP far from where it was
-issued can get served a different (sometimes url-less, SABR-only) format list than
-the same account gets from a residential IP — confirmed 2026-07-17: identical cookies
-resolved fine from a residential test but returned "Requested format is not
-available" from this Render instance. There's no clean fix for that (it's Google's
-own fraud heuristic, not something client-side flags control), so resolve() below
-tries several player_client / format-selector combinations in sequence and only
-gives up once all of them fail, to maximize the chance one gets a servable format.
+Confirmed by direct testing 2026-07-17: once cookies are active, the 'android',
+'web', and combined android+ios+web player clients all get throttled down to a
+storyboard-thumbnails-only format list (no playable audio/video at all), while the
+'tv' client alone still returns the full format list and resolves normally — this
+looks like a stable per-client-type behavior under cookies, not an escalating
+account-level flag. resolve() below tries 'tv' first, several other client/format
+combinations as fallback, and finally retries the whole list with cookies removed
+entirely (helps only for videos popular enough to work anonymously) before giving up.
 
 It does not download or proxy the actual audio/video bytes — it just resolves a
 YouTube video ID to a direct googlevideo.com URL, exactly like cobalt's tunnel URLs
@@ -111,12 +109,11 @@ def _extract_direct_url(info: dict, kind: str):
 def resolve(video_id: str, kind: str):
     url = f"https://www.youtube.com/watch?v={video_id}"
     errors = []
-    # A cookie session can itself end up flagged/restricted (confirmed 2026-07-17 —
-    # even a mega-viral video that resolved fine with zero cookies returned nothing
-    # but storyboard thumbnails once cookies were added), so cookie-using attempts
-    # are tried first, then the exact same strategy list is retried with cookies
-    # off entirely as a last resort rather than letting a poisoned session block
-    # every request.
+    # Cookie-using attempts are tried first (needed for anything but mega-viral
+    # videos), then the same strategy list is retried with cookies off entirely —
+    # cheap insurance in case cookies ever stop helping for some video/account
+    # without meaningfully slowing down the common case, since 'tv' is tried first
+    # and normally succeeds on the very first attempt.
     cookie_modes = [True, False] if _have_cookies else [False]
     for use_cookies in cookie_modes:
         for strategy in _STRATEGIES:
