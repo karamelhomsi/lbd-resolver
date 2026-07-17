@@ -1,0 +1,7 @@
+# Secrets — never commit these.
+cookies.txt
+.env
+node_modules/
+*.log
+__pycache__/
+*.pyc
