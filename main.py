@@ -71,15 +71,17 @@ def _load_cookies() -> bool:
 
 _have_cookies = _load_cookies()
 
-# Each strategy is tried in order until one yields a directly playable URL. Mixing
-# cookies with mobile client spoofing is known to be inconsistent — some accounts/
-# IPs get usable formats from android+ios+web together, others only from web alone
-# (or only from android alone), so multiple client combos are tried rather than one.
+# Each strategy is tried in order until one yields a directly playable URL. Confirmed
+# by direct testing 2026-07-17: with cookies active, the 'android'/'web'/combined
+# clients get throttled down to a storyboard-thumbnails-only format list (4-5
+# entries, nothing playable), while 'tv' alone still returns the full ~30-format
+# list and resolves normally — so it's tried first, with the others kept only as
+# a fallback in case some future video/account behaves differently.
 _STRATEGIES = [
+    {"player_client": ["tv"]},
     {"player_client": ["android", "ios", "web"]},
     {"player_client": ["web"]},
     {"player_client": ["android"]},
-    {"player_client": ["tv"]},
 ]
 # itag 18 (360p H.264/AAC combined) is YouTube's oldest, most universally-available
 # progressive format — kept for compatibility across every client for 15+ years.
