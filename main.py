@@ -1,16 +1,19 @@
 """
-Tiny YouTube stream-URL resolver for Lebanese Black Dude, deployed on Google Cloud
-Run's always-free tier. Public cobalt/Invidious/Piped instances all hit YouTube's
-"sign in to confirm you're not a bot" wall as of 2026-07 — yt-dlp's own extractor
-(actively maintained, handles signature ciphers + proof-of-origin tokens internally)
-still works with ZERO cookies/login, confirmed by direct testing. This service does
-NOT store any personal account data — it's a stateless resolver, nothing to leak.
+Tiny YouTube stream-URL resolver for Lebanese Black Dude, deployed on Render's free
+tier. Public cobalt/Invidious/Piped instances all hit YouTube's "sign in to confirm
+you're not a bot" wall as of 2026-07 — yt-dlp's own extractor (actively maintained,
+handles signature ciphers + proof-of-origin tokens internally) works with ZERO
+cookies for a handful of extremely popular/cached videos, but shared cloud-host IPs
+(Render, GCP, AWS, etc.) are IP-reputation flagged by YouTube for everything else —
+confirmed by direct testing 2026-07-17, every non-mega-viral video hit the bot wall.
+Cookies from a real logged-in session are the standard, yt-dlp-recommended fix for
+this exact error. Set YOUTUBE_COOKIES (raw Netscape cookies.txt content, exported
+from a browser logged into youtube.com) as a Render env var to enable it.
 
 It does not download or proxy the actual audio/video bytes — it just resolves a
 YouTube video ID to a direct googlevideo.com URL, exactly like cobalt's tunnel URLs
 did. The Cloudflare Worker (or the client directly) fetches that URL itself. This
-keeps the service fast (a few seconds per request) and cheap (well within Cloud
-Run's always-free 2M requests/month), since it never has to stream large files.
+keeps the service fast (a few seconds per request) and cheap.
 """
 import os
 import re
@@ -21,6 +24,12 @@ app = Flask(__name__)
 
 SHARED_SECRET = os.environ.get("SHARED_SECRET", "")
 VIDEO_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
+
+COOKIES_PATH = "/tmp/cookies.txt"
+_raw_cookies = os.environ.get("YOUTUBE_COOKIES", "").strip()
+if _raw_cookies:
+    with open(COOKIES_PATH, "w", encoding="utf-8") as f:
+        f.write(_raw_cookies + "\n")
 
 
 def check_secret() -> bool:
@@ -40,6 +49,8 @@ def resolve(video_id: str, kind: str):
         "skip_download": True,
         "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}},
     }
+    if _raw_cookies:
+        ydl_opts["cookiefile"] = COOKIES_PATH
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
 
